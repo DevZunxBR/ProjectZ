@@ -13,6 +13,7 @@ local camera = Workspace.CurrentCamera
 
 local remoteFolder = ReplicatedStorage:WaitForChild("LootRemotes")
 local interactionRemote = remoteFolder:WaitForChild("LootInteraction")
+local inventoryRemote = remoteFolder:WaitForChild("InventoryRemote")
 
 local LOOT_TAG = "LootContainer"
 local MAX_CLICK_DISTANCE = 20
@@ -21,6 +22,7 @@ local HIGHLIGHT_COLOR = Color3.fromRGB(170, 226, 255)
 local SOUND_LIFETIME = 8
 local SOUND_ROLLOFF_DISTANCE = 45
 local ITEM_BUTTON_NAME = "LootItemButton"
+local INVENTORY_TOGGLE_KEY = Enum.KeyCode.Tab
 
 -- Fases da interface: "closed" -> "inspect" -> "open"
 local uiPhase = "closed"
@@ -30,6 +32,9 @@ local currentInventoryState = nil
 local selectedItemName = nil
 local selectedItemSource = nil
 local currentHighlight = nil
+
+-- Inventario standalone (aberto pelo Tab, sem caixa).
+local inventoryOnlyOpen = false
 
 -- Evita conectar o mesmo botao mais de uma vez.
 local connectedButtons = {}
@@ -42,6 +47,11 @@ local refreshLists
 local showActionPanel
 local onInspectClicked
 local onTransferClicked
+local onEquipClicked
+local onDropClicked
+local openInventoryOnly
+local closeActionPanel
+local refreshInventoryOnly
 
 local function getGuiReferences()
 	local playerGui = player:WaitForChild("PlayerGui")
@@ -364,16 +374,44 @@ function onInspectClicked()
 end
 
 function onTransferClicked()
-	if not selectedItemName or not currentLoot then
+	if not selectedItemName then
 		return
 	end
 
 	if selectedItemSource == "inventory" then
-		-- Item do inventario: devolve para a caixa.
-		interactionRemote:FireServer("StoreItem", currentLoot, selectedItemName)
+		if currentLoot then
+			-- Item do inventario com caixa aberta: devolve para a caixa.
+			interactionRemote:FireServer("StoreItem", currentLoot, selectedItemName)
+		end
 	else
-		-- Item da caixa: envia para o inventario.
-		interactionRemote:FireServer("TakeItem", currentLoot, selectedItemName)
+		if currentLoot then
+			-- Item da caixa: envia para o inventario.
+			interactionRemote:FireServer("TakeItem", currentLoot, selectedItemName)
+		end
+	end
+end
+
+function onEquipClicked()
+	if selectedItemName and selectedItemSource == "inventory" then
+		inventoryRemote:FireServer("Equip", selectedItemName)
+		closeActionPanel()
+	end
+end
+
+function onDropClicked()
+	if selectedItemName and selectedItemSource == "inventory" then
+		inventoryRemote:FireServer("Drop", selectedItemName)
+		closeActionPanel()
+	end
+end
+
+function closeActionPanel()
+	selectedItemName = nil
+	selectedItemSource = nil
+
+	local refs = getGuiReferences()
+	if refs and refs.actionFrame then
+		refs.actionFrame.Visible = false
 	end
 end
 
@@ -417,7 +455,8 @@ function showOpenPhase()
 	end
 
 	connectOnce(refs.transferButton, onTransferClicked)
-	-- Dropar e Equipar: apenas enfeite por enquanto (sem acao).
+	connectOnce(refs.equipButton, onEquipClicked)
+	connectOnce(refs.dropButton, onDropClicked)
 end
 
 function showActionPanel(itemName, source)
@@ -434,17 +473,31 @@ function showActionPanel(itemName, source)
 		return
 	end
 
+	-- Garante os listeners (caso a telinha seja aberta pelo inventario via Tab).
+	connectOnce(refs.transferButton, onTransferClicked)
+	connectOnce(refs.equipButton, onEquipClicked)
+	connectOnce(refs.dropButton, onDropClicked)
+
 	if refs.actionTitle and (refs.actionTitle:IsA("TextLabel") or refs.actionTitle:IsA("TextButton")) then
 		refs.actionTitle.Text = itemName
 	end
 
-	-- Ajusta o texto do botao Transferir conforme a origem do item.
-	if refs.transferButton and (refs.transferButton:IsA("TextButton")) then
-		if selectedItemSource == "inventory" then
-			refs.transferButton.Text = "Guardar"
-		else
-			refs.transferButton.Text = "Transferir"
+	local fromInventory = selectedItemSource == "inventory"
+
+	-- Transferir/Guardar so faz sentido com uma caixa aberta.
+	if refs.transferButton then
+		refs.transferButton.Visible = currentLoot ~= nil
+		if refs.transferButton:IsA("TextButton") then
+			refs.transferButton.Text = fromInventory and "Guardar" or "Transferir"
 		end
+	end
+
+	-- Equipar e Dropar so valem para itens do inventario.
+	if refs.equipButton then
+		refs.equipButton.Visible = fromInventory
+	end
+	if refs.dropButton then
+		refs.dropButton.Visible = fromInventory
 	end
 
 	refs.actionFrame.Visible = true
@@ -494,9 +547,35 @@ function refreshLists(errorMessage)
 	end
 end
 
+-- Redesenha apenas a lista do inventario (modo Tab, sem caixa).
+function refreshInventoryOnly(errorMessage)
+	local refs = getGuiReferences()
+	if not refs or not refs.inventoryList then
+		return
+	end
+
+	populateList(refs.inventoryList, (currentInventoryState and currentInventoryState.items) or {}, function(item)
+		showActionPanel(item.name, "inventory")
+	end)
+
+	if refs.inventoryTitle then
+		refs.inventoryTitle.Text = (currentInventoryState and currentInventoryState.title) or "Inventario"
+	end
+
+	if errorMessage and errorMessage ~= "" and refs.lootStatus then
+		refs.lootStatus.Text = errorMessage
+	end
+
+	-- Fecha a telinha de acoes se o item sumiu do inventario.
+	if refs.actionFrame and refs.actionFrame.Visible and not inventoryHasItem(selectedItemName) then
+		closeActionPanel()
+	end
+end
+
 function hideUi()
 	local closingLoot = currentLoot
 	uiPhase = "closed"
+	inventoryOnlyOpen = false
 	currentLoot = nil
 	currentLootState = nil
 	currentInventoryState = nil
@@ -513,6 +592,35 @@ function hideUi()
 	if closingLoot then
 		interactionRemote:FireServer("Close", closingLoot)
 	end
+end
+
+-- Abre apenas o inventario (Tab), sem caixa.
+function openInventoryOnly()
+	local refs = getGuiReferences()
+	if not refs then
+		return
+	end
+
+	if not refs.inventoryFrame then
+		warn("[LootInteraction] InventoryFrame nao encontrado dentro de LootUi. Nao da para abrir o inventario com Tab.")
+		return
+	end
+
+	inventoryOnlyOpen = true
+	uiPhase = "inventory"
+	currentLoot = nil
+	currentLootState = nil
+	clearHighlight()
+
+	hideAllFrames(refs)
+	refs.gui.Enabled = true
+	refs.inventoryFrame.Visible = true
+
+	connectOnce(refs.equipButton, onEquipClicked)
+	connectOnce(refs.dropButton, onDropClicked)
+
+	-- Pede o inventario atual ao servidor; a resposta preenche a lista.
+	inventoryRemote:FireServer("Request")
 end
 
 local function playLocalSound(lootInstance, soundId, volume)
@@ -583,7 +691,37 @@ interactionRemote.OnClientEvent:Connect(function(eventName, lootInstance, a, b, 
 	refreshLists(c)
 end)
 
+-- Atualizacoes do inventario (UI standalone via Tab e sincronia geral).
+inventoryRemote.OnClientEvent:Connect(function(eventName, inventoryState, errorMessage)
+	if eventName ~= "Update" then
+		return
+	end
+
+	currentInventoryState = inventoryState
+
+	-- So redesenha se alguma UI estiver aberta.
+	if uiPhase == "open" then
+		refreshLists(errorMessage)
+	elseif inventoryOnlyOpen then
+		refreshInventoryOnly(errorMessage)
+	end
+end)
+
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+	if input.KeyCode == INVENTORY_TOGGLE_KEY then
+		-- Tab abre/fecha o inventario (so quando nao ha caixa aberta).
+		if uiPhase == "open" or uiPhase == "inspect" then
+			return
+		end
+
+		if inventoryOnlyOpen then
+			hideUi()
+		else
+			openInventoryOnly()
+		end
+		return
+	end
+
 	if input.KeyCode == Enum.KeyCode.Escape then
 		hideUi()
 		return
@@ -606,6 +744,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 	local clickedLoot = raycastLootAtMouse() or getClickedLoot(mouse.Target)
 	if clickedLoot and isLootInRange(clickedLoot) then
 		-- Clicou numa caixa: mostra a UI de inspecionar (igual a porta).
+		inventoryOnlyOpen = false
 		currentLoot = clickedLoot
 		highlightLoot(clickedLoot)
 		showInspectPhase()
