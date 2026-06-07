@@ -67,76 +67,34 @@ local function isInRange(droppedItem)
 	return (rootPart.Position - itemPart.Position).Magnitude <= MAX_PICKUP_DISTANCE
 end
 
--- Cria (ou clona) o prompt F customizado preso ao item.
+-- Avisa apenas uma vez se o template manual nao existir.
+local warnedMissingTemplate = false
+
+-- Clona o prompt que VOCE cria manualmente em ReplicatedStorage > PickupPrompt.
+-- Nada e gerado automaticamente: o design e todo seu.
 local function buildPrompt(droppedItem, itemName)
 	local adornee = getDroppedPart(droppedItem)
 	if not adornee then
 		return nil
 	end
 
-	-- Usa um BillboardGui chamado "PickupPrompt" em ReplicatedStorage, se existir.
 	local template = ReplicatedStorage:FindFirstChild("PickupPrompt")
-	local billboard
-
-	if template and template:IsA("BillboardGui") then
-		billboard = template:Clone()
-		-- Garante que aparece mesmo com a camera isometrica (fica longe do item).
-		billboard.MaxDistance = math.huge
-		billboard.AlwaysOnTop = true
-	else
-		billboard = Instance.new("BillboardGui")
-		billboard.Size = UDim2.fromOffset(140, 44)
-		billboard.StudsOffsetWorldSpace = Vector3.new(0, 2.5, 0)
-		billboard.AlwaysOnTop = true
-		-- IMPORTANTE: na camera isometrica a camera fica longe; sem isso o
-		-- prompt nunca aparece porque a camera passa do MaxDistance.
-		billboard.MaxDistance = math.huge
-
-		local frame = Instance.new("Frame")
-		frame.Size = UDim2.fromScale(1, 1)
-		frame.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-		frame.BackgroundTransparency = 0.25
-		frame.BorderSizePixel = 0
-		frame.Parent = billboard
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 8)
-		corner.Parent = frame
-
-		local key = Instance.new("TextLabel")
-		key.Name = "KeyLabel"
-		key.Size = UDim2.fromOffset(28, 28)
-		key.Position = UDim2.new(0, 6, 0.5, 0)
-		key.AnchorPoint = Vector2.new(0, 0.5)
-		key.BackgroundColor3 = Color3.fromRGB(245, 245, 245)
-		key.TextColor3 = Color3.fromRGB(20, 20, 24)
-		key.Font = Enum.Font.GothamBold
-		key.TextSize = 18
-		key.Text = "F"
-		key.Parent = frame
-
-		local keyCorner = Instance.new("UICorner")
-		keyCorner.CornerRadius = UDim.new(0, 6)
-		keyCorner.Parent = key
-
-		local label = Instance.new("TextLabel")
-		label.Name = "ItemLabel"
-		label.Size = UDim2.new(1, -44, 1, 0)
-		label.Position = UDim2.fromOffset(40, 0)
-		label.BackgroundTransparency = 1
-		label.TextColor3 = Color3.fromRGB(245, 245, 245)
-		label.Font = Enum.Font.GothamMedium
-		label.TextSize = 15
-		label.TextXAlignment = Enum.TextXAlignment.Left
-		label.Text = "Pegar"
-		label.Parent = frame
+	if not template or not template:IsA("BillboardGui") then
+		if not warnedMissingTemplate then
+			warnedMissingTemplate = true
+			warn("[DroppedItemPickup] Crie um BillboardGui chamado 'PickupPrompt' em ReplicatedStorage para o prompt aparecer. "
+				.. "Opcional: um TextLabel chamado 'ItemLabel' dentro dele recebe o nome do item.")
+		end
+		return nil
 	end
 
+	local billboard = template:Clone()
 	billboard.Name = PROMPT_NAME
 	billboard.Adornee = adornee
+	billboard.Enabled = true
 	billboard.Parent = adornee
 
-	-- Atualiza o texto do item, se houver um label conhecido.
+	-- Preenche o nome do item, se voce tiver um TextLabel chamado 'ItemLabel'.
 	local itemLabel = billboard:FindFirstChild("ItemLabel", true)
 	if itemLabel and itemLabel:IsA("TextLabel") then
 		itemLabel.Text = ("Pegar %s"):format(itemName or "item")
