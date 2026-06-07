@@ -7,13 +7,8 @@ local remoteFolder = ReplicatedStorage:WaitForChild("LootRemotes")
 local interactionRemote = remoteFolder:WaitForChild("LootInteraction")
 
 -- RemoteEvent das acoes que nao dependem de uma caixa (Tab, equipar, dropar, pegar do chao).
--- Criado automaticamente para reduzir a montagem manual.
-local inventoryRemote = remoteFolder:FindFirstChild("InventoryRemote")
-if not inventoryRemote then
-	inventoryRemote = Instance.new("RemoteEvent")
-	inventoryRemote.Name = "InventoryRemote"
-	inventoryRemote.Parent = remoteFolder
-end
+-- Voce DEVE criar este RemoteEvent manualmente em ReplicatedStorage > LootRemotes.
+local inventoryRemote = remoteFolder:WaitForChild("InventoryRemote")
 
 local LOOT_TAG = "LootContainer"
 local DROPPED_TAG = "DroppedItem"
