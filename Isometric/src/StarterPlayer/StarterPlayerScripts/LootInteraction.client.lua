@@ -32,6 +32,7 @@ local currentLootState = nil
 local currentInventoryState = nil
 local selectedItemName = nil
 local selectedItemSource = nil
+local selectedItemEquipped = false
 local currentHighlight = nil
 
 -- Inventario standalone (aberto pelo Tab, sem caixa).
@@ -322,7 +323,11 @@ local function createItemButton(itemList, item, layoutOrder)
 
 	button.Name = ITEM_BUTTON_NAME
 	button.LayoutOrder = layoutOrder
-	button.Text = ("%s  x%d"):format(item.name, item.count)
+	if item.equipped then
+		button.Text = ("%s  x%d  (equipado)"):format(item.name, item.count)
+	else
+		button.Text = ("%s  x%d"):format(item.name, item.count)
+	end
 	button.Parent = itemList
 
 	return button
@@ -407,13 +412,22 @@ end
 
 function onEquipClicked()
 	if selectedItemName and selectedItemSource == "inventory" then
-		inventoryRemote:FireServer("Equip", selectedItemName)
+		if selectedItemEquipped then
+			-- Item ja equipado: desequipa e devolve ao inventario.
+			inventoryRemote:FireServer("Unequip", selectedItemName)
+		else
+			inventoryRemote:FireServer("Equip", selectedItemName)
+		end
 		closeActionPanel()
 	end
 end
 
 function onDropClicked()
 	if selectedItemName and selectedItemSource == "inventory" then
+		-- Itens equipados nao podem ser dropados diretamente; desequipe antes.
+		if selectedItemEquipped then
+			return
+		end
 		inventoryRemote:FireServer("Drop", selectedItemName)
 		closeActionPanel()
 	end
@@ -422,6 +436,7 @@ end
 function closeActionPanel()
 	selectedItemName = nil
 	selectedItemSource = nil
+	selectedItemEquipped = false
 
 	local refs = getGuiReferences()
 	if refs and refs.actionFrame then
@@ -473,9 +488,14 @@ function showOpenPhase()
 	connectOnce(refs.dropButton, onDropClicked)
 end
 
-function showActionPanel(itemName, source)
+function showActionPanel(item, source)
+	-- 'item' pode ser a tabela do item { name, count, equipped } ou apenas o nome.
+	local itemName = type(item) == "table" and item.name or item
+	local isEquipped = type(item) == "table" and item.equipped == true or false
+
 	selectedItemName = itemName
 	selectedItemSource = source or "loot"
+	selectedItemEquipped = isEquipped
 
 	local refs = getGuiReferences()
 	if not refs then
@@ -498,20 +518,25 @@ function showActionPanel(itemName, source)
 
 	local fromInventory = selectedItemSource == "inventory"
 
-	-- Transferir/Guardar so faz sentido com uma caixa aberta.
+	-- Transferir/Guardar so faz sentido com uma caixa aberta e item NAO equipado.
 	if refs.transferButton then
-		refs.transferButton.Visible = currentLoot ~= nil
+		refs.transferButton.Visible = currentLoot ~= nil and not isEquipped
 		if refs.transferButton:IsA("TextButton") then
 			refs.transferButton.Text = fromInventory and "Guardar" or "Transferir"
 		end
 	end
 
-	-- Equipar e Dropar so valem para itens do inventario.
+	-- Equipar/Desequipar so vale para itens do inventario.
 	if refs.equipButton then
 		refs.equipButton.Visible = fromInventory
+		if refs.equipButton:IsA("TextButton") then
+			refs.equipButton.Text = isEquipped and "Desequipar" or "Equipar"
+		end
 	end
+
+	-- Dropar so vale para itens do inventario que NAO estao equipados.
 	if refs.dropButton then
-		refs.dropButton.Visible = fromInventory
+		refs.dropButton.Visible = fromInventory and not isEquipped
 	end
 
 	-- Mostra a telinha mesmo se ela estiver dentro de outro Frame.
@@ -545,7 +570,7 @@ function refreshLists(errorMessage)
 
 	if refs.inventoryList and currentInventoryState then
 		populateList(refs.inventoryList, currentInventoryState.items or {}, function(item)
-			showActionPanel(item.name, "inventory")
+			showActionPanel(item, "inventory")
 		end)
 		if refs.inventoryTitle then
 			refs.inventoryTitle.Text = currentInventoryState.title or "Inventario"
@@ -570,7 +595,7 @@ function refreshInventoryOnly(errorMessage)
 	end
 
 	populateList(refs.inventoryList, (currentInventoryState and currentInventoryState.items) or {}, function(item)
-		showActionPanel(item.name, "inventory")
+		showActionPanel(item, "inventory")
 	end)
 
 	if refs.inventoryTitle then

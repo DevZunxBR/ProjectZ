@@ -192,7 +192,8 @@ Estado inicial recomendado:
 - `TransferButton` move TODA a quantidade do item da caixa para o inventario (so aparece com a caixa aberta)
 - com um item do inventario e a caixa aberta, o mesmo botao vira "Guardar" e devolve tudo para a caixa
 - `EquipButton` equipa o item: ele sai do inventario e vira uma `Tool` na hotbar do Roblox
-- `DropButton` larga o item no chao, na frente do jogador, com a tag `DroppedItem`
+- itens equipados aparecem no inventario marcados como `(equipado)`; clicar neles mostra o botao `Desequipar`, que devolve a `Tool` para o inventario
+- `DropButton` larga o item no chao, na frente do jogador, com a tag `DroppedItem` (itens equipados precisam ser desequipados antes de dropar)
 - a telinha de acoes some sozinha se o item selecionado acabar na sua origem
 - a UI fica onde voce posicionou; o sistema nao move os paineis
 - clicar fora dos paineis, apertar `Escape` ou se afastar fecha a UI

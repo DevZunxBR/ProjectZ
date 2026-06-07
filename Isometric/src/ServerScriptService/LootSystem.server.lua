@@ -138,10 +138,56 @@ local function getLootState(lootInstance)
 	}
 end
 
+-- Lista as Tools de loot atualmente equipadas (no personagem ou no Backpack).
+local function getEquippedTools(player)
+	local tools = {}
+
+	local containers = {}
+	if player.Character then
+		table.insert(containers, player.Character)
+	end
+	local backpack = player:FindFirstChildOfClass("Backpack")
+	if backpack then
+		table.insert(containers, backpack)
+	end
+
+	for _, container in ipairs(containers) do
+		for _, child in ipairs(container:GetChildren()) do
+			if child:IsA("Tool") and child:GetAttribute("LootItem") then
+				local itemName = child:GetAttribute("ItemName") or child.Name
+				table.insert(tools, { tool = child, name = itemName })
+			end
+		end
+	end
+
+	return tools
+end
+
 local function getInventoryState(player)
+	-- Itens guardados no inventario (nao equipados).
+	local items = sortedItemList(getInventory(player))
+
+	-- Acrescenta os itens equipados, marcados com equipped = true.
+	local equippedCounts = {}
+	for _, info in ipairs(getEquippedTools(player)) do
+		equippedCounts[info.name] = (equippedCounts[info.name] or 0) + 1
+	end
+
+	local equippedList = {}
+	for name, count in pairs(equippedCounts) do
+		table.insert(equippedList, { name = name, count = count, equipped = true })
+	end
+	table.sort(equippedList, function(a, b)
+		return a.name < b.name
+	end)
+
+	for _, entry in ipairs(equippedList) do
+		table.insert(items, entry)
+	end
+
 	return {
 		title = INVENTORY_TITLE,
-		items = sortedItemList(getInventory(player)),
+		items = items,
 	}
 end
 
@@ -324,9 +370,27 @@ local function equipItem(player, itemName)
 	removeFromInventory(player, itemName, 1)
 
 	local tool = getToolForItem(itemName)
+	-- Marca a Tool como item do sistema para podermos desequipar depois.
+	tool:SetAttribute("LootItem", true)
+	tool:SetAttribute("ItemName", itemName)
 	-- Coloca no Backpack; o jogador equipa pela hotbar do Roblox.
 	tool.Parent = backpack or character
 	return true
+end
+
+-- Desequipar: tira UMA Tool equipada daquele item e devolve ao inventario.
+local function unequipItem(player, itemName)
+	for _, info in ipairs(getEquippedTools(player)) do
+		if info.name == itemName then
+			if not addToInventory(player, itemName, 1) then
+				return false
+			end
+			info.tool:Destroy()
+			return true
+		end
+	end
+
+	return false
 end
 
 -- ===== Dropar: gera um item fisico no chao com a tag DroppedItem =====
@@ -541,6 +605,19 @@ inventoryRemote.OnServerEvent:Connect(function(player, action, payload)
 			sendInventoryUpdate(player)
 		else
 			sendInventoryUpdate(player, "Nao foi possivel equipar.")
+		end
+		return
+	end
+
+	if action == "Unequip" then
+		if typeof(payload) ~= "string" then
+			return
+		end
+
+		if unequipItem(player, payload) then
+			sendInventoryUpdate(player)
+		else
+			sendInventoryUpdate(player, "Nao foi possivel desequipar.")
 		end
 		return
 	end
