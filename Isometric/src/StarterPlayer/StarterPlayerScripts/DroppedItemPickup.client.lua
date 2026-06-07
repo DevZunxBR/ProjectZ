@@ -72,7 +72,7 @@ local warnedMissingTemplate = false
 
 -- Clona o prompt que VOCE cria manualmente em ReplicatedStorage > PickupPrompt.
 -- Nada e gerado automaticamente: o design e todo seu.
-local function buildPrompt(droppedItem, itemName)
+local function buildPrompt(droppedItem)
 	local adornee = getDroppedPart(droppedItem)
 	if not adornee then
 		return nil
@@ -94,11 +94,7 @@ local function buildPrompt(droppedItem, itemName)
 	billboard.Enabled = true
 	billboard.Parent = adornee
 
-	-- Preenche o nome do item, se voce tiver um TextLabel chamado 'ItemLabel'.
-	local itemLabel = billboard:FindFirstChild("ItemLabel", true)
-	if itemLabel and itemLabel:IsA("TextLabel") then
-		itemLabel.Text = ("Pegar %s"):format(itemName or "item")
-	end
+	-- O texto e 100% manual: o script NAO altera nada do design do prompt.
 
 	return billboard
 end
@@ -118,8 +114,7 @@ local function showPromptFor(droppedItem)
 
 	clearPrompt()
 
-	local itemName = droppedItem:GetAttribute("ItemName")
-	activePrompt = buildPrompt(droppedItem, itemName)
+	activePrompt = buildPrompt(droppedItem)
 	if activePrompt then
 		hoveredItem = droppedItem
 	end

@@ -224,8 +224,7 @@ O nome do filho deve ser igual ao nome do item (o `Name` do `IntValue` na `Folde
 - itens dropados recebem a tag `DroppedItem` e vao para a pasta `DroppedItems` no `Workspace` (criada automaticamente)
 - ao passar o mouse sobre um item dropado e estar perto, aparece o prompt que VOCE criou
 - apertar `F` pega o item e devolve ao inventario
-- o visual do prompt e MANUAL: crie um `BillboardGui` chamado `PickupPrompt` em `ReplicatedStorage`. O script apenas clona ele e o anexa ao item; nada e gerado automaticamente. Se nao existir, o prompt nao aparece (e um aviso e mostrado no Output)
-- se tiver um `TextLabel` chamado `ItemLabel` dentro do `PickupPrompt`, o texto recebe o nome do item
+- o visual e o texto do prompt sao 100% MANUAIS: crie um `BillboardGui` chamado `PickupPrompt` em `ReplicatedStorage`. O script apenas clona ele e o anexa ao item; nada e gerado nem alterado automaticamente. Se nao existir, o prompt nao aparece (e um aviso e mostrado no Output)
 - dica: na camera isometrica a camera fica longe, entao deixe o `MaxDistance` do `PickupPrompt` alto (ou 0 para ilimitado) e `AlwaysOnTop = true`
 - distancia maxima ajustavel em `MAX_PICKUP_DISTANCE` (cliente e servidor)
 
