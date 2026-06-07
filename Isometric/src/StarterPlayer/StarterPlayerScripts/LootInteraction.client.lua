@@ -257,6 +257,14 @@ local function ensureListLayout(itemList)
 		layout.Padding = UDim.new(0, 4)
 		layout.Parent = itemList
 	end
+
+	-- Se a lista for um ScrollingFrame, configura a area de rolagem automaticamente.
+	-- Sem isso, os botoes existem mas ficam invisiveis (CanvasSize = 0).
+	if itemList:IsA("ScrollingFrame") then
+		itemList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		itemList.CanvasSize = UDim2.new(0, 0, 0, 0)
+		itemList.ScrollingDirection = Enum.ScrollingDirection.Y
+	end
 end
 
 local function clearItemButtons(itemList)
@@ -274,6 +282,8 @@ local function createItemButton(itemList, item, layoutOrder)
 	if template and template:IsA("GuiButton") then
 		button = template:Clone()
 		button.Visible = true
+		-- Garante que o layout controle a posicao do clone.
+		button.Position = UDim2.new(0, 0, 0, 0)
 	else
 		button = Instance.new("TextButton")
 		button.Size = UDim2.new(1, 0, 0, 28)
