@@ -55,10 +55,12 @@ local function getGuiReferences()
 		lootTitle = lootFrame:FindFirstChild("TitleLabel"),
 		lootStatus = lootFrame:FindFirstChild("StatusLabel"),
 		-- Visual de arraste criado MANUALMENTE no Studio (opcional).
-		dragGhost = gui:FindFirstChild("DragGhost"),
+		-- Busca recursiva: pode estar em qualquer lugar dentro da LootUi.
+		dragGhost = gui:FindFirstChild("DragGhost", true),
 	}
 
-	local inventoryFrame = gui:FindFirstChild("InventoryFrame")
+	-- Busca recursiva: funciona mesmo se o InventoryFrame estiver dentro de outro Frame.
+	local inventoryFrame = gui:FindFirstChild("InventoryFrame", true)
 	if inventoryFrame then
 		references.inventoryFrame = inventoryFrame
 		references.inventoryList = inventoryFrame:FindFirstChild("ItemList")
