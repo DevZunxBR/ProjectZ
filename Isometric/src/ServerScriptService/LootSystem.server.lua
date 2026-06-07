@@ -354,6 +354,21 @@ local function getWorldModelForItem(itemName)
 	return buildGenericWorldModel(itemName)
 end
 
+local function anchorAndQuery(model)
+	if model:IsA("BasePart") then
+		model.Anchored = true
+		model.CanQuery = true
+		model.CanTouch = true
+	end
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = true
+			descendant.CanQuery = true
+			descendant.CanTouch = true
+		end
+	end
+end
+
 local function placeWorldModel(model, cframe)
 	if model:IsA("Model") then
 		if not model.PrimaryPart then
@@ -365,6 +380,9 @@ local function placeWorldModel(model, cframe)
 	elseif model:IsA("BasePart") then
 		model.CFrame = cframe
 	end
+
+	-- Ancora o item para ele ficar parado e facil de mirar com o mouse.
+	anchorAndQuery(model)
 end
 
 local function dropItem(player, itemName)

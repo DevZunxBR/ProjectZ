@@ -161,19 +161,50 @@ local function showPromptFor(droppedItem)
 	end
 end
 
--- Atualiza o item sob o mouse a cada frame.
-RunService.RenderStepped:Connect(function()
-	local target = mouse.Target
-	local droppedItem = target and resolveDroppedItem(target) or nil
+-- Faz um raycast da camera pelo mouse e devolve o primeiro item dropado encontrado.
+local function raycastDroppedItem()
+	local mousePos = UserInputService:GetMouseLocation()
+	local ray = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
 
-	if droppedItem and isInRange(droppedItem) and droppedItem.Parent then
-		showPromptFor(droppedItem)
-	else
-		clearPrompt()
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.IgnoreWater = true
+
+	local character = player.Character
+	local ignored = character and { character } or {}
+	params.FilterDescendantsInstances = ignored
+
+	for _ = 1, 10 do
+		local result = Workspace:Raycast(ray.Origin, ray.Direction * RAY_DISTANCE, params)
+		if not result then
+			return nil
+		end
+
+		local dropped = resolveDroppedItem(result.Instance)
+		if dropped then
+			return dropped
+		end
+
+		-- Ignora o que bateu e continua o raio (ex: parede na frente).
+		table.insert(ignored, result.Instance)
+		params.FilterDescendantsInstances = ignored
 	end
 
-	-- Some o prompt se o item sair de alcance enquanto o mouse continua nele.
-	if hoveredItem and (not hoveredItem.Parent or not isInRange(hoveredItem)) then
+	return nil
+end
+
+-- Atualiza o item sob o mouse a cada frame.
+RunService.RenderStepped:Connect(function()
+	-- Usa raycast (mais confiavel) e cai no mouse.Target como reserva.
+	local droppedItem = raycastDroppedItem()
+	if not droppedItem then
+		local target = mouse.Target
+		droppedItem = target and resolveDroppedItem(target) or nil
+	end
+
+	if droppedItem and droppedItem.Parent and isInRange(droppedItem) then
+		showPromptFor(droppedItem)
+	else
 		clearPrompt()
 	end
 end)
