@@ -17,15 +17,21 @@ local LOOT_TAG = "LootContainer"
 local MAX_CLICK_DISTANCE = 20
 local LOOT_RAY_DISTANCE = 300
 local UI_CURSOR_OFFSET = Vector2.new(12, 12)
+local PANEL_GAP = 12
 local HIGHLIGHT_COLOR = Color3.fromRGB(170, 226, 255)
 local SOUND_LIFETIME = 8
 local SOUND_ROLLOFF_DISTANCE = 45
 local ITEM_BUTTON_NAME = "LootItemButton"
+local INVENTORY_HIGHLIGHT_COLOR = Color3.fromRGB(120, 200, 120)
 
 local currentLoot = nil
-local currentState = nil
+local currentLootState = nil
+local currentInventoryState = nil
 local lastClickPosition = nil
 local currentHighlight = nil
+
+-- Estado do arraste atual: { itemName, ghost, originalColor }
+local dragging = nil
 
 local function getGuiReferences()
 	local playerGui = player:WaitForChild("PlayerGui")
@@ -34,20 +40,32 @@ local function getGuiReferences()
 		return nil
 	end
 
-	local frame = gui:FindFirstChild("Frame")
-	if not frame then
+	local lootFrame = gui:FindFirstChild("LootFrame") or gui:FindFirstChild("Frame")
+	if not lootFrame then
 		return nil
 	end
 
-	local itemList = frame:FindFirstChild("ItemList")
-	if not itemList then
+	local lootList = lootFrame:FindFirstChild("ItemList")
+	if not lootList then
 		return nil
 	end
 
-	local titleLabel = frame:FindFirstChild("TitleLabel")
-	local statusLabel = frame:FindFirstChild("StatusLabel")
+	local references = {
+		gui = gui,
+		lootFrame = lootFrame,
+		lootList = lootList,
+		lootTitle = lootFrame:FindFirstChild("TitleLabel"),
+		lootStatus = lootFrame:FindFirstChild("StatusLabel"),
+	}
 
-	return gui, frame, itemList, titleLabel, statusLabel
+	local inventoryFrame = gui:FindFirstChild("InventoryFrame")
+	if inventoryFrame then
+		references.inventoryFrame = inventoryFrame
+		references.inventoryList = inventoryFrame:FindFirstChild("ItemList")
+		references.inventoryTitle = inventoryFrame:FindFirstChild("TitleLabel")
+	end
+
+	return references
 end
 
 local function getLootPart(lootInstance)
@@ -123,6 +141,36 @@ local function isLootInRange(lootInstance)
 	return (rootPart.Position - lootPart.Position).Magnitude <= MAX_CLICK_DISTANCE
 end
 
+local function isPositionInsideFrame(frame, position)
+	if not frame or not frame.Visible then
+		return false
+	end
+
+	local topLeft = frame.AbsolutePosition
+	local size = frame.AbsoluteSize
+	return position.X >= topLeft.X
+		and position.X <= topLeft.X + size.X
+		and position.Y >= topLeft.Y
+		and position.Y <= topLeft.Y + size.Y
+end
+
+local function isPositionInsideUi(position)
+	local refs = getGuiReferences()
+	if not refs or not refs.gui.Enabled then
+		return false
+	end
+
+	if isPositionInsideFrame(refs.lootFrame, position) then
+		return true
+	end
+
+	if refs.inventoryFrame and isPositionInsideFrame(refs.inventoryFrame, position) then
+		return true
+	end
+
+	return false
+end
+
 local function clearHighlight()
 	if currentHighlight then
 		currentHighlight:Destroy()
@@ -143,28 +191,41 @@ local function highlightLoot(lootInstance)
 	currentHighlight.Parent = lootInstance
 end
 
-local function moveUiToCursor()
-	local _, frame = getGuiReferences()
-	if not frame or not lastClickPosition then
+local function positionPanels()
+	local refs = getGuiReferences()
+	if not refs or not lastClickPosition then
 		return
 	end
 
-	frame.AnchorPoint = Vector2.new(0, 0)
-	frame.Position = UDim2.fromOffset(
+	refs.lootFrame.AnchorPoint = Vector2.new(0, 0)
+	refs.lootFrame.Position = UDim2.fromOffset(
 		lastClickPosition.X + UI_CURSOR_OFFSET.X,
 		lastClickPosition.Y + UI_CURSOR_OFFSET.Y
 	)
+
+	if refs.inventoryFrame then
+		refs.inventoryFrame.AnchorPoint = Vector2.new(0, 0)
+		refs.inventoryFrame.Position = UDim2.fromOffset(
+			lastClickPosition.X + UI_CURSOR_OFFSET.X + refs.lootFrame.AbsoluteSize.X + PANEL_GAP,
+			lastClickPosition.Y + UI_CURSOR_OFFSET.Y
+		)
+	end
 end
 
 local function setUiVisible(visible)
-	local gui, frame = getGuiReferences()
-	if gui and frame then
-		if visible then
-			moveUiToCursor()
-		end
+	local refs = getGuiReferences()
+	if not refs then
+		return
+	end
 
-		gui.Enabled = visible
-		frame.Visible = visible
+	if visible then
+		positionPanels()
+	end
+
+	refs.gui.Enabled = visible
+	refs.lootFrame.Visible = visible
+	if refs.inventoryFrame then
+		refs.inventoryFrame.Visible = visible
 	end
 end
 
@@ -209,53 +270,150 @@ local function createItemButton(itemList, item, layoutOrder)
 	button.Text = ("%s  x%d"):format(item.name, item.count)
 	button.Parent = itemList
 
-	button.MouseButton1Click:Connect(function()
-		if currentLoot then
-			interactionRemote:FireServer("TakeItem", currentLoot, item.name)
-		end
-	end)
-
 	return button
 end
 
+local function cancelDrag()
+	if not dragging then
+		return
+	end
+
+	if dragging.ghost then
+		dragging.ghost:Destroy()
+	end
+
+	local refs = getGuiReferences()
+	if refs and refs.inventoryFrame then
+		refs.inventoryFrame.BackgroundColor3 = dragging.inventoryColor
+	end
+
+	dragging = nil
+end
+
+local function updateDragGhost(position)
+	if dragging and dragging.ghost then
+		dragging.ghost.Position = UDim2.fromOffset(position.X + 8, position.Y + 8)
+	end
+
+	-- Realca o painel de inventario quando o item esta sobre ele.
+	local refs = getGuiReferences()
+	if dragging and refs and refs.inventoryFrame then
+		if isPositionInsideFrame(refs.inventoryFrame, position) then
+			refs.inventoryFrame.BackgroundColor3 = INVENTORY_HIGHLIGHT_COLOR
+		else
+			refs.inventoryFrame.BackgroundColor3 = dragging.inventoryColor
+		end
+	end
+end
+
+local function startDrag(item)
+	cancelDrag()
+
+	local refs = getGuiReferences()
+	if not refs then
+		return
+	end
+
+	local ghost = Instance.new("TextLabel")
+	ghost.Name = "LootDragGhost"
+	ghost.Size = UDim2.fromOffset(150, 28)
+	ghost.BackgroundColor3 = Color3.fromRGB(50, 50, 58)
+	ghost.BackgroundTransparency = 0.15
+	ghost.TextColor3 = Color3.fromRGB(245, 245, 245)
+	ghost.TextSize = 14
+	ghost.Font = Enum.Font.GothamMedium
+	ghost.BorderSizePixel = 0
+	ghost.ZIndex = 50
+	ghost.Text = ("%s  x1"):format(item.name)
+	ghost.Parent = refs.gui
+
+	dragging = {
+		itemName = item.name,
+		ghost = ghost,
+		inventoryColor = refs.inventoryFrame and refs.inventoryFrame.BackgroundColor3 or nil,
+	}
+
+	updateDragGhost(UserInputService:GetMouseLocation())
+end
+
+local function finishDrag(position)
+	if not dragging then
+		return
+	end
+
+	local itemName = dragging.itemName
+	local refs = getGuiReferences()
+	local droppedOnInventory = refs
+		and refs.inventoryFrame
+		and isPositionInsideFrame(refs.inventoryFrame, position)
+
+	cancelDrag()
+
+	if droppedOnInventory and currentLoot then
+		interactionRemote:FireServer("TakeItem", currentLoot, itemName)
+	end
+end
+
+local function populateList(itemList, items, makeDraggable)
+	ensureListLayout(itemList)
+	clearItemButtons(itemList)
+
+	for index, item in ipairs(items) do
+		local button = createItemButton(itemList, item, index)
+		if makeDraggable then
+			local capturedItem = item
+			button.MouseButton1Down:Connect(function()
+				startDrag(capturedItem)
+			end)
+		end
+	end
+end
+
 local function refreshUi(errorMessage)
-	local gui, frame, itemList, titleLabel, statusLabel = getGuiReferences()
-	if not gui or not currentLoot or not currentState then
+	local refs = getGuiReferences()
+	if not refs or not currentLoot or not currentLootState then
 		setUiVisible(false)
 		return
 	end
 
-	gui.Enabled = true
-	frame.Visible = true
-	moveUiToCursor()
+	refs.gui.Enabled = true
+	refs.lootFrame.Visible = true
+	if refs.inventoryFrame then
+		refs.inventoryFrame.Visible = true
+	end
+	positionPanels()
 
-	ensureListLayout(itemList)
-	clearItemButtons(itemList)
+	local lootItems = currentLootState.items or {}
+	populateList(refs.lootList, lootItems, true)
 
-	local items = currentState.items or {}
-	for index, item in ipairs(items) do
-		createItemButton(itemList, item, index)
+	if refs.lootTitle then
+		refs.lootTitle.Text = currentLootState.title or "Loot"
 	end
 
-	if titleLabel then
-		titleLabel.Text = currentState.title or "Loot"
-	end
-
-	if statusLabel then
+	if refs.lootStatus then
 		if errorMessage and errorMessage ~= "" then
-			statusLabel.Text = errorMessage
-		elseif #items == 0 then
-			statusLabel.Text = "Vazio"
+			refs.lootStatus.Text = errorMessage
+		elseif #lootItems == 0 then
+			refs.lootStatus.Text = "Vazio"
 		else
-			statusLabel.Text = ("%d item(s)"):format(#items)
+			refs.lootStatus.Text = ("%d item(s)"):format(#lootItems)
+		end
+	end
+
+	if refs.inventoryList and currentInventoryState then
+		populateList(refs.inventoryList, currentInventoryState.items or {}, false)
+		if refs.inventoryTitle then
+			refs.inventoryTitle.Text = currentInventoryState.title or "Inventario"
 		end
 	end
 end
 
 local function hideUi()
 	local closingLoot = currentLoot
+	cancelDrag()
 	currentLoot = nil
-	currentState = nil
+	currentLootState = nil
+	currentInventoryState = nil
 	clearHighlight()
 	setUiVisible(false)
 
@@ -306,7 +464,7 @@ local function playLocalSound(lootInstance, soundId, volume)
 	end)
 end
 
-interactionRemote.OnClientEvent:Connect(function(eventName, lootInstance, state, errorMessage, soundId, soundVolume)
+interactionRemote.OnClientEvent:Connect(function(eventName, lootInstance, lootState, inventoryState, errorMessage, soundId, soundVolume)
 	if eventName ~= "State" then
 		return
 	end
@@ -315,26 +473,51 @@ interactionRemote.OnClientEvent:Connect(function(eventName, lootInstance, state,
 
 	lastClickPosition = lastClickPosition or UserInputService:GetMouseLocation()
 	currentLoot = lootInstance
-	currentState = state
+	currentLootState = lootState
+	currentInventoryState = inventoryState
 	highlightLoot(lootInstance)
 	refreshUi(errorMessage)
 end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+	if input.KeyCode == Enum.KeyCode.Escape then
+		hideUi()
+		return
+	end
+
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+		return
+	end
+
+	-- Clique processado pela GUI (botoes/itens) ou dentro dos paineis: nao fecha.
 	if gameProcessedEvent then
 		return
 	end
 
-	if input.KeyCode == Enum.KeyCode.Escape then
+	local clickPosition = UserInputService:GetMouseLocation()
+	if isPositionInsideUi(clickPosition) then
+		return
+	end
+
+	local clickedLoot = raycastLootAtMouse() or getClickedLoot(mouse.Target)
+	if clickedLoot and isLootInRange(clickedLoot) then
+		lastClickPosition = clickPosition
+		interactionRemote:FireServer("RequestState", clickedLoot)
+	else
+		-- Clicou fora da UI e fora de um loot valido: fecha tudo.
 		hideUi()
-	elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
-		local clickedLoot = raycastLootAtMouse() or getClickedLoot(mouse.Target)
-		if clickedLoot and isLootInRange(clickedLoot) then
-			lastClickPosition = UserInputService:GetMouseLocation()
-			interactionRemote:FireServer("RequestState", clickedLoot)
-		else
-			hideUi()
-		end
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
+		updateDragGhost(UserInputService:GetMouseLocation())
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 and dragging then
+		finishDrag(UserInputService:GetMouseLocation())
 	end
 end)
 
