@@ -228,6 +228,19 @@ O nome do filho deve ser igual ao nome do item (o `Name` do `IntValue` na `Folde
 - dica: na camera isometrica a camera fica longe, entao deixe o `MaxDistance` do `PickupPrompt` alto (ou 0 para ilimitado) e `AlwaysOnTop = true`
 - distancia maxima ajustavel em `MAX_PICKUP_DISTANCE` (cliente e servidor)
 
+### 10. Deixar itens largados no mapa (manual, pelo Studio)
+
+Voce pode pre-colocar itens no chao direto no Studio, sem precisar dropar do inventario. O sistema reconhece qualquer objeto que tenha a tag e os atributos certos:
+
+1. crie uma `Part` ou um `Model` (se for `Model`, defina o `PrimaryPart`)
+2. posicione no mapa e deixe `Anchored = true`
+3. adicione a tag `DroppedItem`
+4. adicione os atributos:
+   - `ItemName` (texto) - o nome do item, ex: `Bandagem` (precisa bater com o nome usado em `ItemAssets` se quiser modelo ao equipar/dropar)
+   - `Count` (numero) - a quantidade, ex: `2`
+
+Pronto: ao passar o mouse e estar perto, aparece o prompt `F`; ao apertar `F`, o item vai para o inventario com a quantidade de `Count` e o objeto e removido do mapa. Pode ficar dentro da pasta `DroppedItems` ou em qualquer lugar do `Workspace`.
+
 ## Regras prontas
 
 - clicar na porta abre a UI na posicao do cursor
