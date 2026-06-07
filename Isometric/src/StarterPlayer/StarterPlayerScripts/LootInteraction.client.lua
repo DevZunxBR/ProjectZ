@@ -40,6 +40,10 @@ local function getGuiReferences()
 		return nil
 	end
 
+	-- Alinha o espaco da UI com UserInputService:GetMouseLocation(),
+	-- senao o drop fica deslocado pela barra de topo (~36px).
+	gui.IgnoreGuiInset = true
+
 	local lootFrame = gui:FindFirstChild("LootFrame") or gui:FindFirstChild("Frame")
 	if not lootFrame then
 		return nil
@@ -197,18 +201,33 @@ local function positionPanels()
 		return
 	end
 
+	local viewport = camera.ViewportSize
+	local lootSize = refs.lootFrame.AbsoluteSize
+	local invSize = (refs.inventoryFrame and refs.inventoryFrame.AbsoluteSize) or Vector2.zero
+
+	local totalWidth = lootSize.X
+	if refs.inventoryFrame then
+		totalWidth += PANEL_GAP + invSize.X
+	end
+	local maxHeight = math.max(lootSize.Y, invSize.Y)
+
+	local startX = lastClickPosition.X + UI_CURSOR_OFFSET.X
+	local startY = lastClickPosition.Y + UI_CURSOR_OFFSET.Y
+
+	-- Mantem os dois paineis dentro da tela para sempre dar para soltar no inventario.
+	if viewport.X > 0 then
+		startX = math.clamp(startX, 8, math.max(8, viewport.X - totalWidth - 8))
+	end
+	if viewport.Y > 0 then
+		startY = math.clamp(startY, 8, math.max(8, viewport.Y - maxHeight - 8))
+	end
+
 	refs.lootFrame.AnchorPoint = Vector2.new(0, 0)
-	refs.lootFrame.Position = UDim2.fromOffset(
-		lastClickPosition.X + UI_CURSOR_OFFSET.X,
-		lastClickPosition.Y + UI_CURSOR_OFFSET.Y
-	)
+	refs.lootFrame.Position = UDim2.fromOffset(startX, startY)
 
 	if refs.inventoryFrame then
 		refs.inventoryFrame.AnchorPoint = Vector2.new(0, 0)
-		refs.inventoryFrame.Position = UDim2.fromOffset(
-			lastClickPosition.X + UI_CURSOR_OFFSET.X + refs.lootFrame.AbsoluteSize.X + PANEL_GAP,
-			lastClickPosition.Y + UI_CURSOR_OFFSET.Y
-		)
+		refs.inventoryFrame.Position = UDim2.fromOffset(startX + lootSize.X + PANEL_GAP, startY)
 	end
 end
 
@@ -343,9 +362,14 @@ local function finishDrag(position)
 
 	local itemName = dragging.itemName
 	local refs = getGuiReferences()
-	local droppedOnInventory = refs
-		and refs.inventoryFrame
-		and isPositionInsideFrame(refs.inventoryFrame, position)
+
+	if not refs or not refs.inventoryFrame then
+		warn("[LootInteraction] InventoryFrame nao encontrado dentro de LootUi. Crie um Frame chamado exatamente 'InventoryFrame'.")
+		cancelDrag()
+		return
+	end
+
+	local droppedOnInventory = isPositionInsideFrame(refs.inventoryFrame, position)
 
 	cancelDrag()
 
@@ -382,6 +406,8 @@ local function refreshUi(errorMessage)
 		refs.inventoryFrame.Visible = true
 	end
 	positionPanels()
+	-- Reposiciona depois que o layout calcula AbsoluteSize (1o frame apos abrir).
+	task.defer(positionPanels)
 
 	local lootItems = currentLootState.items or {}
 	populateList(refs.lootList, lootItems, true)
