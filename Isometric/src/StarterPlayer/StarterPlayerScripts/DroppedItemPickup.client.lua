@@ -10,7 +10,12 @@ local mouse = player:GetMouse()
 local camera = Workspace.CurrentCamera
 
 local remoteFolder = ReplicatedStorage:WaitForChild("LootRemotes")
-local inventoryRemote = remoteFolder:WaitForChild("InventoryRemote")
+-- Espera com timeout para nao travar o script caso o servidor nao tenha criado ainda.
+local inventoryRemote = remoteFolder:WaitForChild("InventoryRemote", 10)
+if not inventoryRemote then
+	warn("[DroppedItemPickup] InventoryRemote nao encontrado. Confirme o LootSystem.server.lua atualizado em ServerScriptService.")
+	return
+end
 
 local DROPPED_TAG = "DroppedItem"
 local PICKUP_KEY = Enum.KeyCode.F

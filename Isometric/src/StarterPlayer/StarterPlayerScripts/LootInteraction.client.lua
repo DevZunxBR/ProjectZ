@@ -13,7 +13,20 @@ local camera = Workspace.CurrentCamera
 
 local remoteFolder = ReplicatedStorage:WaitForChild("LootRemotes")
 local interactionRemote = remoteFolder:WaitForChild("LootInteraction")
-local inventoryRemote = remoteFolder:WaitForChild("InventoryRemote")
+
+-- Espera com timeout: se o servidor (LootSystem.server.lua) nao criar o
+-- InventoryRemote, NAO trava o script inteiro. Sem isso, clicar na caixa,
+-- Tab e tudo mais parariam de funcionar.
+local inventoryRemote = remoteFolder:WaitForChild("InventoryRemote", 10)
+if not inventoryRemote then
+	warn("[LootInteraction] InventoryRemote nao encontrado em ReplicatedStorage.LootRemotes. "
+		.. "Confirme que o LootSystem.server.lua ATUALIZADO esta em ServerScriptService. "
+		.. "Equipar/Dropar/pegar do chao nao vao funcionar ate isso ser corrigido.")
+	-- Fallback local apenas para o restante da UI continuar funcionando.
+	inventoryRemote = Instance.new("RemoteEvent")
+	inventoryRemote.Name = "InventoryRemote"
+	inventoryRemote.Parent = remoteFolder
+end
 
 local LOOT_TAG = "LootContainer"
 local MAX_CLICK_DISTANCE = 20
