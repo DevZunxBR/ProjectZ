@@ -231,7 +231,14 @@ interactionRemote.OnServerEvent:Connect(function(player, action, lootInstance, i
 	end
 
 	if action == "Close" then
-		sendLootState(player, lootInstance, nil, normalizeSoundId(CLOSE_SOUND_ID))
+		-- Evento separado: so toca o som, nao reenvia o estado (senao a UI reabriria).
+		interactionRemote:FireClient(
+			player,
+			"Closed",
+			lootInstance,
+			normalizeSoundId(CLOSE_SOUND_ID),
+			LOOT_SOUND_VOLUME
+		)
 		return
 	end
 end)

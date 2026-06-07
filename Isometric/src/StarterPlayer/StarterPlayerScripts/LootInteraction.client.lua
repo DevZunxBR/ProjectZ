@@ -21,15 +21,26 @@ local HIGHLIGHT_COLOR = Color3.fromRGB(170, 226, 255)
 local SOUND_LIFETIME = 8
 local SOUND_ROLLOFF_DISTANCE = 45
 local ITEM_BUTTON_NAME = "LootItemButton"
-local INVENTORY_HIGHLIGHT_COLOR = Color3.fromRGB(120, 200, 120)
 
+-- Fases da interface: "closed" -> "inspect" -> "open"
+local uiPhase = "closed"
 local currentLoot = nil
 local currentLootState = nil
 local currentInventoryState = nil
+local selectedItemName = nil
 local currentHighlight = nil
 
--- Estado do arraste atual: { itemName, ghost, originalColor }
-local dragging = nil
+-- Evita conectar o mesmo botao mais de uma vez.
+local connectedButtons = {}
+
+-- Declaracoes adiantadas (funcoes que se referenciam entre si).
+local hideUi
+local showInspectPhase
+local showOpenPhase
+local refreshLists
+local showActionPanel
+local onInspectClicked
+local onTransferClicked
 
 local function getGuiReferences()
 	local playerGui = player:WaitForChild("PlayerGui")
@@ -54,12 +65,15 @@ local function getGuiReferences()
 		lootList = lootList,
 		lootTitle = lootFrame:FindFirstChild("TitleLabel"),
 		lootStatus = lootFrame:FindFirstChild("StatusLabel"),
-		-- Visual de arraste criado MANUALMENTE no Studio (opcional).
-		-- Busca recursiva: pode estar em qualquer lugar dentro da LootUi.
-		dragGhost = gui:FindFirstChild("DragGhost", true),
 	}
 
-	-- Busca recursiva: funciona mesmo se o InventoryFrame estiver dentro de outro Frame.
+	-- Buscas recursivas: os elementos podem estar em qualquer lugar dentro da LootUi.
+	local inspectFrame = gui:FindFirstChild("InspectFrame", true)
+	if inspectFrame then
+		references.inspectFrame = inspectFrame
+		references.inspectButton = inspectFrame:FindFirstChild("InspectButton", true)
+	end
+
 	local inventoryFrame = gui:FindFirstChild("InventoryFrame", true)
 	if inventoryFrame then
 		references.inventoryFrame = inventoryFrame
@@ -67,7 +81,25 @@ local function getGuiReferences()
 		references.inventoryTitle = inventoryFrame:FindFirstChild("TitleLabel")
 	end
 
+	local actionFrame = gui:FindFirstChild("ActionFrame", true)
+	if actionFrame then
+		references.actionFrame = actionFrame
+		references.actionTitle = actionFrame:FindFirstChild("ItemName") or actionFrame:FindFirstChild("TitleLabel")
+		references.transferButton = actionFrame:FindFirstChild("TransferButton", true)
+		references.dropButton = actionFrame:FindFirstChild("DropButton", true)
+		references.equipButton = actionFrame:FindFirstChild("EquipButton", true)
+	end
+
 	return references
+end
+
+local function connectOnce(button, callback)
+	if not button or connectedButtons[button] then
+		return
+	end
+
+	connectedButtons[button] = true
+	button.MouseButton1Click:Connect(callback)
 end
 
 local function getLootPart(lootInstance)
@@ -156,8 +188,7 @@ local function isPositionInsideFrame(frame, position)
 		and position.Y <= topLeft.Y + size.Y
 end
 
--- Converte a posicao do mouse (que inclui a barra de topo) para o espaco da UI,
--- respeitando o IgnoreGuiInset que VOCE definiu na ScreenGui.
+-- Converte a posicao do mouse (que inclui a barra de topo) para o espaco da UI.
 local function toGuiSpace(gui, position)
 	if not gui or gui.IgnoreGuiInset then
 		return position
@@ -174,13 +205,11 @@ local function isPositionInsideUi(position)
 	end
 
 	local guiPosition = toGuiSpace(refs.gui, position)
-
-	if isPositionInsideFrame(refs.lootFrame, guiPosition) then
-		return true
-	end
-
-	if refs.inventoryFrame and isPositionInsideFrame(refs.inventoryFrame, guiPosition) then
-		return true
+	local frames = { refs.inspectFrame, refs.lootFrame, refs.inventoryFrame, refs.actionFrame }
+	for _, frame in ipairs(frames) do
+		if frame and isPositionInsideFrame(frame, guiPosition) then
+			return true
+		end
 	end
 
 	return false
@@ -206,21 +235,16 @@ local function highlightLoot(lootInstance)
 	currentHighlight.Parent = lootInstance
 end
 
-local function setUiVisible(visible)
-	local refs = getGuiReferences()
-	if not refs then
-		return
+local function hideAllFrames(refs)
+	if refs.inspectFrame then
+		refs.inspectFrame.Visible = false
 	end
-
-	refs.gui.Enabled = visible
-	refs.lootFrame.Visible = visible
+	refs.lootFrame.Visible = false
 	if refs.inventoryFrame then
-		refs.inventoryFrame.Visible = visible
+		refs.inventoryFrame.Visible = false
 	end
-
-	-- O visual de arraste so aparece durante um arraste.
-	if refs.dragGhost and not dragging then
-		refs.dragGhost.Visible = false
+	if refs.actionFrame then
+		refs.actionFrame.Visible = false
 	end
 end
 
@@ -268,143 +292,123 @@ local function createItemButton(itemList, item, layoutOrder)
 	return button
 end
 
-local function cancelDrag()
-	if not dragging then
-		return
-	end
-
-	-- Esconde o visual manual (NAO destroi, pois foi criado por voce no Studio).
-	if dragging.ghost then
-		dragging.ghost.Visible = false
-	end
-
-	local refs = getGuiReferences()
-	if refs and refs.inventoryFrame and dragging.inventoryColor then
-		refs.inventoryFrame.BackgroundColor3 = dragging.inventoryColor
-	end
-
-	dragging = nil
-end
-
-local function setGhostText(ghost, text)
-	if ghost:IsA("TextLabel") or ghost:IsA("TextButton") or ghost:IsA("TextBox") then
-		ghost.Text = text
-	end
-
-	local label = ghost:FindFirstChild("ItemName") or ghost:FindFirstChild("Label")
-	if label and (label:IsA("TextLabel") or label:IsA("TextButton") or label:IsA("TextBox")) then
-		label.Text = text
-	end
-end
-
-local function updateDragGhost(position)
-	local refs = getGuiReferences()
-	if not refs then
-		return
-	end
-
-	local guiPosition = toGuiSpace(refs.gui, position)
-
-	if dragging and dragging.ghost then
-		local parent = dragging.ghost.Parent
-		local parentAbsolute = (parent and parent:IsA("GuiObject")) and parent.AbsolutePosition or Vector2.zero
-		dragging.ghost.Position = UDim2.fromOffset(
-			guiPosition.X - parentAbsolute.X,
-			guiPosition.Y - parentAbsolute.Y
-		)
-	end
-
-	-- Realca o painel de inventario quando o item esta sobre ele.
-	if dragging and refs.inventoryFrame then
-		if isPositionInsideFrame(refs.inventoryFrame, guiPosition) then
-			refs.inventoryFrame.BackgroundColor3 = INVENTORY_HIGHLIGHT_COLOR
-		else
-			refs.inventoryFrame.BackgroundColor3 = dragging.inventoryColor
-		end
-	end
-end
-
-local function startDrag(item)
-	cancelDrag()
-
-	local refs = getGuiReferences()
-	if not refs then
-		return
-	end
-
-	-- Usa o visual de arraste que VOCE criou no Studio (DragGhost dentro de LootUi).
-	-- Se ele nao existir, o arraste ainda funciona, so nao mostra o icone seguindo o mouse.
-	local ghost = refs.dragGhost
-	if ghost then
-		setGhostText(ghost, ("%s  x1"):format(item.name))
-		ghost.Visible = true
-	end
-
-	dragging = {
-		itemName = item.name,
-		ghost = ghost,
-		inventoryColor = refs.inventoryFrame and refs.inventoryFrame.BackgroundColor3 or nil,
-	}
-
-	updateDragGhost(UserInputService:GetMouseLocation())
-end
-
-local function finishDrag(position)
-	if not dragging then
-		return
-	end
-
-	local itemName = dragging.itemName
-	local refs = getGuiReferences()
-
-	if not refs or not refs.inventoryFrame then
-		warn("[LootInteraction] InventoryFrame nao encontrado dentro de LootUi. Crie um Frame chamado exatamente 'InventoryFrame'.")
-		cancelDrag()
-		return
-	end
-
-	local droppedOnInventory = isPositionInsideFrame(refs.inventoryFrame, toGuiSpace(refs.gui, position))
-
-	cancelDrag()
-
-	if droppedOnInventory and currentLoot then
-		interactionRemote:FireServer("TakeItem", currentLoot, itemName)
-	end
-end
-
-local function populateList(itemList, items, makeDraggable)
+local function populateList(itemList, items, onItemClick)
 	ensureListLayout(itemList)
 	clearItemButtons(itemList)
 
 	for index, item in ipairs(items) do
 		local button = createItemButton(itemList, item, index)
-		if makeDraggable then
+		if onItemClick then
 			local capturedItem = item
-			button.MouseButton1Down:Connect(function()
-				startDrag(capturedItem)
+			button.MouseButton1Click:Connect(function()
+				onItemClick(capturedItem)
 			end)
 		end
 	end
 end
 
-local function refreshUi(errorMessage)
+local function lootHasItem(itemName)
+	if not currentLootState or not itemName then
+		return false
+	end
+
+	for _, item in ipairs(currentLootState.items or {}) do
+		if item.name == itemName then
+			return true
+		end
+	end
+
+	return false
+end
+
+function onInspectClicked()
+	if currentLoot and isLootInRange(currentLoot) then
+		-- Pede o estado ao servidor; a resposta abre os paineis (fase "open").
+		interactionRemote:FireServer("RequestState", currentLoot)
+	end
+end
+
+function onTransferClicked()
+	if selectedItemName and currentLoot then
+		interactionRemote:FireServer("TakeItem", currentLoot, selectedItemName)
+	end
+end
+
+function showInspectPhase()
 	local refs = getGuiReferences()
-	if not refs or not currentLoot or not currentLootState then
-		setUiVisible(false)
+	if not refs then
 		return
 	end
 
+	uiPhase = "inspect"
+	selectedItemName = nil
+	hideAllFrames(refs)
+	refs.gui.Enabled = true
+
+	if refs.inspectFrame then
+		refs.inspectFrame.Visible = true
+		connectOnce(refs.inspectButton, onInspectClicked)
+	else
+		warn("[LootInteraction] InspectFrame nao encontrado dentro de LootUi. Crie um Frame 'InspectFrame' com um TextButton 'InspectButton'.")
+	end
+end
+
+function showOpenPhase()
+	local refs = getGuiReferences()
+	if not refs then
+		return
+	end
+
+	uiPhase = "open"
+	if refs.inspectFrame then
+		refs.inspectFrame.Visible = false
+	end
 	refs.gui.Enabled = true
 	refs.lootFrame.Visible = true
 	if refs.inventoryFrame then
 		refs.inventoryFrame.Visible = true
 	end
+	if refs.actionFrame then
+		refs.actionFrame.Visible = false
+	end
 
-	local lootItems = currentLootState.items or {}
-	populateList(refs.lootList, lootItems, true)
+	connectOnce(refs.transferButton, onTransferClicked)
+	-- Dropar e Equipar: apenas enfeite por enquanto (sem acao).
+end
+
+function showActionPanel(itemName)
+	selectedItemName = itemName
+
+	local refs = getGuiReferences()
+	if not refs then
+		return
+	end
+
+	if not refs.actionFrame then
+		warn("[LootInteraction] ActionFrame nao encontrado dentro de LootUi. Crie um Frame 'ActionFrame' com botoes 'TransferButton', 'DropButton' e 'EquipButton'.")
+		return
+	end
+
+	if refs.actionTitle and (refs.actionTitle:IsA("TextLabel") or refs.actionTitle:IsA("TextButton")) then
+		refs.actionTitle.Text = itemName
+	end
+
+	refs.actionFrame.Visible = true
+end
+
+function refreshLists(errorMessage)
+	local refs = getGuiReferences()
+	if not refs then
+		return
+	end
+
+	local lootItems = (currentLootState and currentLootState.items) or {}
+	populateList(refs.lootList, lootItems, function(item)
+		showActionPanel(item.name)
+	end)
 
 	if refs.lootTitle then
-		refs.lootTitle.Text = currentLootState.title or "Loot"
+		refs.lootTitle.Text = (currentLootState and currentLootState.title) or "Loot"
 	end
 
 	if refs.lootStatus then
@@ -418,21 +422,33 @@ local function refreshUi(errorMessage)
 	end
 
 	if refs.inventoryList and currentInventoryState then
-		populateList(refs.inventoryList, currentInventoryState.items or {}, false)
+		populateList(refs.inventoryList, currentInventoryState.items or {}, nil)
 		if refs.inventoryTitle then
 			refs.inventoryTitle.Text = currentInventoryState.title or "Inventario"
 		end
 	end
+
+	-- Se o item selecionado nao existe mais na caixa, fecha a telinha de acoes.
+	if refs.actionFrame and refs.actionFrame.Visible and not lootHasItem(selectedItemName) then
+		refs.actionFrame.Visible = false
+		selectedItemName = nil
+	end
 end
 
-local function hideUi()
+function hideUi()
 	local closingLoot = currentLoot
-	cancelDrag()
+	uiPhase = "closed"
 	currentLoot = nil
 	currentLootState = nil
 	currentInventoryState = nil
+	selectedItemName = nil
 	clearHighlight()
-	setUiVisible(false)
+
+	local refs = getGuiReferences()
+	if refs then
+		hideAllFrames(refs)
+		refs.gui.Enabled = false
+	end
 
 	if closingLoot then
 		interactionRemote:FireServer("Close", closingLoot)
@@ -481,18 +497,30 @@ local function playLocalSound(lootInstance, soundId, volume)
 	end)
 end
 
-interactionRemote.OnClientEvent:Connect(function(eventName, lootInstance, lootState, inventoryState, errorMessage, soundId, soundVolume)
+interactionRemote.OnClientEvent:Connect(function(eventName, lootInstance, a, b, c, d, e)
+	if eventName == "Closed" then
+		-- a = soundId, b = volume
+		playLocalSound(lootInstance, a, b)
+		return
+	end
+
 	if eventName ~= "State" then
 		return
 	end
 
-	playLocalSound(lootInstance, soundId, soundVolume)
+	-- a = lootState, b = inventoryState, c = errorMessage, d = soundId, e = volume
+	playLocalSound(lootInstance, d, e)
 
 	currentLoot = lootInstance
-	currentLootState = lootState
-	currentInventoryState = inventoryState
+	currentLootState = a
+	currentInventoryState = b
 	highlightLoot(lootInstance)
-	refreshUi(errorMessage)
+
+	if uiPhase ~= "open" then
+		showOpenPhase()
+	end
+
+	refreshLists(c)
 end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
@@ -505,7 +533,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 		return
 	end
 
-	-- Clique processado pela GUI (botoes/itens) ou dentro dos paineis: nao fecha.
+	-- Clique processado pela GUI (botoes/itens): nao fecha nem reinspeciona.
 	if gameProcessedEvent then
 		return
 	end
@@ -517,22 +545,13 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 
 	local clickedLoot = raycastLootAtMouse() or getClickedLoot(mouse.Target)
 	if clickedLoot and isLootInRange(clickedLoot) then
-		interactionRemote:FireServer("RequestState", clickedLoot)
+		-- Clicou numa caixa: mostra a UI de inspecionar (igual a porta).
+		currentLoot = clickedLoot
+		highlightLoot(clickedLoot)
+		showInspectPhase()
 	else
-		-- Clicou fora da UI e fora de um loot valido: fecha tudo.
+		-- Clicou fora da UI e fora de uma caixa: fecha tudo.
 		hideUi()
-	end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
-		updateDragGhost(UserInputService:GetMouseLocation())
-	end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 and dragging then
-		finishDrag(UserInputService:GetMouseLocation())
 	end
 end)
 
