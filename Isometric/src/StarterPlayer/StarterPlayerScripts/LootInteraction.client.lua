@@ -54,6 +54,8 @@ local function getGuiReferences()
 		lootList = lootList,
 		lootTitle = lootFrame:FindFirstChild("TitleLabel"),
 		lootStatus = lootFrame:FindFirstChild("StatusLabel"),
+		-- Visual de arraste criado MANUALMENTE no Studio (opcional).
+		dragGhost = gui:FindFirstChild("DragGhost"),
 	}
 
 	local inventoryFrame = gui:FindFirstChild("InventoryFrame")
@@ -213,6 +215,11 @@ local function setUiVisible(visible)
 	if refs.inventoryFrame then
 		refs.inventoryFrame.Visible = visible
 	end
+
+	-- O visual de arraste so aparece durante um arraste.
+	if refs.dragGhost and not dragging then
+		refs.dragGhost.Visible = false
+	end
 end
 
 local function ensureListLayout(itemList)
@@ -264,16 +271,28 @@ local function cancelDrag()
 		return
 	end
 
+	-- Esconde o visual manual (NAO destroi, pois foi criado por voce no Studio).
 	if dragging.ghost then
-		dragging.ghost:Destroy()
+		dragging.ghost.Visible = false
 	end
 
 	local refs = getGuiReferences()
-	if refs and refs.inventoryFrame then
+	if refs and refs.inventoryFrame and dragging.inventoryColor then
 		refs.inventoryFrame.BackgroundColor3 = dragging.inventoryColor
 	end
 
 	dragging = nil
+end
+
+local function setGhostText(ghost, text)
+	if ghost:IsA("TextLabel") or ghost:IsA("TextButton") or ghost:IsA("TextBox") then
+		ghost.Text = text
+	end
+
+	local label = ghost:FindFirstChild("ItemName") or ghost:FindFirstChild("Label")
+	if label and (label:IsA("TextLabel") or label:IsA("TextButton") or label:IsA("TextBox")) then
+		label.Text = text
+	end
 end
 
 local function updateDragGhost(position)
@@ -285,7 +304,12 @@ local function updateDragGhost(position)
 	local guiPosition = toGuiSpace(refs.gui, position)
 
 	if dragging and dragging.ghost then
-		dragging.ghost.Position = UDim2.fromOffset(guiPosition.X + 8, guiPosition.Y + 8)
+		local parent = dragging.ghost.Parent
+		local parentAbsolute = (parent and parent:IsA("GuiObject")) and parent.AbsolutePosition or Vector2.zero
+		dragging.ghost.Position = UDim2.fromOffset(
+			guiPosition.X - parentAbsolute.X,
+			guiPosition.Y - parentAbsolute.Y
+		)
 	end
 
 	-- Realca o painel de inventario quando o item esta sobre ele.
@@ -306,18 +330,13 @@ local function startDrag(item)
 		return
 	end
 
-	local ghost = Instance.new("TextLabel")
-	ghost.Name = "LootDragGhost"
-	ghost.Size = UDim2.fromOffset(150, 28)
-	ghost.BackgroundColor3 = Color3.fromRGB(50, 50, 58)
-	ghost.BackgroundTransparency = 0.15
-	ghost.TextColor3 = Color3.fromRGB(245, 245, 245)
-	ghost.TextSize = 14
-	ghost.Font = Enum.Font.GothamMedium
-	ghost.BorderSizePixel = 0
-	ghost.ZIndex = 50
-	ghost.Text = ("%s  x1"):format(item.name)
-	ghost.Parent = refs.gui
+	-- Usa o visual de arraste que VOCE criou no Studio (DragGhost dentro de LootUi).
+	-- Se ele nao existir, o arraste ainda funciona, so nao mostra o icone seguindo o mouse.
+	local ghost = refs.dragGhost
+	if ghost then
+		setGhostText(ghost, ("%s  x1"):format(item.name))
+		ghost.Visible = true
+	end
 
 	dragging = {
 		itemName = item.name,
