@@ -80,11 +80,17 @@ local function buildPrompt(droppedItem, itemName)
 
 	if template and template:IsA("BillboardGui") then
 		billboard = template:Clone()
+		-- Garante que aparece mesmo com a camera isometrica (fica longe do item).
+		billboard.MaxDistance = math.huge
+		billboard.AlwaysOnTop = true
 	else
 		billboard = Instance.new("BillboardGui")
 		billboard.Size = UDim2.fromOffset(140, 44)
+		billboard.StudsOffsetWorldSpace = Vector3.new(0, 2.5, 0)
 		billboard.AlwaysOnTop = true
-		billboard.MaxDistance = MAX_PICKUP_DISTANCE + 4
+		-- IMPORTANTE: na camera isometrica a camera fica longe; sem isso o
+		-- prompt nunca aparece porque a camera passa do MaxDistance.
+		billboard.MaxDistance = math.huge
 
 		local frame = Instance.new("Frame")
 		frame.Size = UDim2.fromScale(1, 1)

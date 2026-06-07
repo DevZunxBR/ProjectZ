@@ -261,6 +261,19 @@ local function hideAllFrames(refs)
 	end
 end
 
+-- Torna um frame visivel, incluindo os Frames pais ate o ScreenGui.
+-- Necessario quando, por exemplo, o InventoryFrame esta DENTRO do LootFrame:
+-- mostrar so o filho nao adianta se o pai estiver invisivel.
+local function showFrameThroughAncestors(frame, stopAt)
+	local current = frame
+	while current and current ~= stopAt do
+		if current:IsA("GuiObject") then
+			current.Visible = true
+		end
+		current = current.Parent
+	end
+end
+
 local function ensureListLayout(itemList)
 	local layout = itemList:FindFirstChildOfClass("UIListLayout")
 	if not layout then
@@ -501,7 +514,8 @@ function showActionPanel(itemName, source)
 		refs.dropButton.Visible = fromInventory
 	end
 
-	refs.actionFrame.Visible = true
+	-- Mostra a telinha mesmo se ela estiver dentro de outro Frame.
+	showFrameThroughAncestors(refs.actionFrame, refs.gui)
 end
 
 function refreshLists(errorMessage)
@@ -615,7 +629,8 @@ function openInventoryOnly()
 
 	hideAllFrames(refs)
 	refs.gui.Enabled = true
-	refs.inventoryFrame.Visible = true
+	-- Mostra o inventario mesmo se ele estiver dentro de outro Frame (ex: LootFrame).
+	showFrameThroughAncestors(refs.inventoryFrame, refs.gui)
 
 	connectOnce(refs.equipButton, onEquipClicked)
 	connectOnce(refs.dropButton, onDropClicked)
