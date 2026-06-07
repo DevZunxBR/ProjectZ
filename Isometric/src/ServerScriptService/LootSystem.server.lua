@@ -149,32 +149,40 @@ local function isPlayerInRange(player, lootInstance)
 	return (rootPart.Position - lootPart.Position).Magnitude <= MAX_LOOT_DISTANCE
 end
 
-local function takeLootItem(lootInstance, itemName)
+-- Quantidade disponivel do item na caixa.
+local function getLootItemCount(lootInstance, itemName)
 	local folder = getLootFolder(lootInstance)
 	if not folder then
-		return false
+		return 0
 	end
 
 	local entry = folder:FindFirstChild(itemName)
 	if not entry or not (entry:IsA("IntValue") or entry:IsA("NumberValue")) then
-		return false
+		return 0
 	end
 
-	if math.floor(entry.Value) <= 0 then
-		return false
-	end
-
-	local newCount = math.floor(entry.Value) - 1
-	if newCount <= 0 then
-		entry:Destroy()
-	else
-		entry.Value = newCount
-	end
-
-	return true
+	return math.max(0, math.floor(entry.Value))
 end
 
-local function addToInventory(player, itemName)
+-- Remove o stack INTEIRO do item da caixa.
+local function removeLootItem(lootInstance, itemName)
+	local folder = getLootFolder(lootInstance)
+	if not folder then
+		return
+	end
+
+	local entry = folder:FindFirstChild(itemName)
+	if entry then
+		entry:Destroy()
+	end
+end
+
+local function addToInventory(player, itemName, amount)
+	amount = math.floor(amount or 1)
+	if amount <= 0 then
+		return false
+	end
+
 	local inventory = getInventory(player)
 	local current = inventory[itemName] or 0
 
@@ -184,7 +192,7 @@ local function addToInventory(player, itemName)
 		return false
 	end
 
-	inventory[itemName] = current + 1
+	inventory[itemName] = current + amount
 	return true
 end
 
@@ -207,26 +215,20 @@ interactionRemote.OnServerEvent:Connect(function(player, action, lootInstance, i
 			return
 		end
 
-		if not addToInventory(player, itemName) then
+		-- Transfere o stack INTEIRO (toda a quantidade), de uma vez.
+		local available = getLootItemCount(lootInstance, itemName)
+		if available <= 0 then
+			sendLootState(player, lootInstance, "Item indisponivel.")
+			return
+		end
+
+		if not addToInventory(player, itemName, available) then
 			sendLootState(player, lootInstance, "Inventario cheio.")
 			return
 		end
 
-		local taken = takeLootItem(lootInstance, itemName)
-		if taken then
-			sendLootState(player, lootInstance, nil, normalizeSoundId(TAKE_SOUND_ID))
-		else
-			-- O loot nao tinha o item: desfaz a adicao no inventario.
-			local inventory = getInventory(player)
-			local current = inventory[itemName] or 0
-			if current <= 1 then
-				inventory[itemName] = nil
-			else
-				inventory[itemName] = current - 1
-			end
-
-			sendLootState(player, lootInstance, "Item indisponivel.")
-		end
+		removeLootItem(lootInstance, itemName)
+		sendLootState(player, lootInstance, nil, normalizeSoundId(TAKE_SOUND_ID))
 		return
 	end
 

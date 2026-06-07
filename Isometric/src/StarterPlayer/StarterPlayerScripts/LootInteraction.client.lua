@@ -77,7 +77,8 @@ local function getGuiReferences()
 	local inventoryFrame = gui:FindFirstChild("InventoryFrame", true)
 	if inventoryFrame then
 		references.inventoryFrame = inventoryFrame
-		references.inventoryList = inventoryFrame:FindFirstChild("ItemList")
+		-- Usa o ItemList se existir; senao, usa o proprio InventoryFrame como lista.
+		references.inventoryList = inventoryFrame:FindFirstChild("ItemList") or inventoryFrame
 		references.inventoryTitle = inventoryFrame:FindFirstChild("TitleLabel")
 	end
 
@@ -426,6 +427,8 @@ function refreshLists(errorMessage)
 		if refs.inventoryTitle then
 			refs.inventoryTitle.Text = currentInventoryState.title or "Inventario"
 		end
+	elseif not refs.inventoryFrame then
+		warn("[LootInteraction] InventoryFrame nao encontrado dentro de LootUi. Os itens transferidos nao tem onde aparecer.")
 	end
 
 	-- Se o item selecionado nao existe mais na caixa, fecha a telinha de acoes.
