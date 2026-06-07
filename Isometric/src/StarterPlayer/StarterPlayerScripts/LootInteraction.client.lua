@@ -1,5 +1,6 @@
 local CollectionService = game:GetService("CollectionService")
 local ContentProvider = game:GetService("ContentProvider")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -16,8 +17,6 @@ local interactionRemote = remoteFolder:WaitForChild("LootInteraction")
 local LOOT_TAG = "LootContainer"
 local MAX_CLICK_DISTANCE = 20
 local LOOT_RAY_DISTANCE = 300
-local UI_CURSOR_OFFSET = Vector2.new(12, 12)
-local PANEL_GAP = 12
 local HIGHLIGHT_COLOR = Color3.fromRGB(170, 226, 255)
 local SOUND_LIFETIME = 8
 local SOUND_ROLLOFF_DISTANCE = 45
@@ -27,7 +26,6 @@ local INVENTORY_HIGHLIGHT_COLOR = Color3.fromRGB(120, 200, 120)
 local currentLoot = nil
 local currentLootState = nil
 local currentInventoryState = nil
-local lastClickPosition = nil
 local currentHighlight = nil
 
 -- Estado do arraste atual: { itemName, ghost, originalColor }
@@ -39,10 +37,6 @@ local function getGuiReferences()
 	if not gui then
 		return nil
 	end
-
-	-- Alinha o espaco da UI com UserInputService:GetMouseLocation(),
-	-- senao o drop fica deslocado pela barra de topo (~36px).
-	gui.IgnoreGuiInset = true
 
 	local lootFrame = gui:FindFirstChild("LootFrame") or gui:FindFirstChild("Frame")
 	if not lootFrame then
@@ -158,17 +152,30 @@ local function isPositionInsideFrame(frame, position)
 		and position.Y <= topLeft.Y + size.Y
 end
 
+-- Converte a posicao do mouse (que inclui a barra de topo) para o espaco da UI,
+-- respeitando o IgnoreGuiInset que VOCE definiu na ScreenGui.
+local function toGuiSpace(gui, position)
+	if not gui or gui.IgnoreGuiInset then
+		return position
+	end
+
+	local inset = GuiService:GetGuiInset()
+	return position - inset
+end
+
 local function isPositionInsideUi(position)
 	local refs = getGuiReferences()
 	if not refs or not refs.gui.Enabled then
 		return false
 	end
 
-	if isPositionInsideFrame(refs.lootFrame, position) then
+	local guiPosition = toGuiSpace(refs.gui, position)
+
+	if isPositionInsideFrame(refs.lootFrame, guiPosition) then
 		return true
 	end
 
-	if refs.inventoryFrame and isPositionInsideFrame(refs.inventoryFrame, position) then
+	if refs.inventoryFrame and isPositionInsideFrame(refs.inventoryFrame, guiPosition) then
 		return true
 	end
 
@@ -195,50 +202,10 @@ local function highlightLoot(lootInstance)
 	currentHighlight.Parent = lootInstance
 end
 
-local function positionPanels()
-	local refs = getGuiReferences()
-	if not refs or not lastClickPosition then
-		return
-	end
-
-	local viewport = camera.ViewportSize
-	local lootSize = refs.lootFrame.AbsoluteSize
-	local invSize = (refs.inventoryFrame and refs.inventoryFrame.AbsoluteSize) or Vector2.zero
-
-	local totalWidth = lootSize.X
-	if refs.inventoryFrame then
-		totalWidth += PANEL_GAP + invSize.X
-	end
-	local maxHeight = math.max(lootSize.Y, invSize.Y)
-
-	local startX = lastClickPosition.X + UI_CURSOR_OFFSET.X
-	local startY = lastClickPosition.Y + UI_CURSOR_OFFSET.Y
-
-	-- Mantem os dois paineis dentro da tela para sempre dar para soltar no inventario.
-	if viewport.X > 0 then
-		startX = math.clamp(startX, 8, math.max(8, viewport.X - totalWidth - 8))
-	end
-	if viewport.Y > 0 then
-		startY = math.clamp(startY, 8, math.max(8, viewport.Y - maxHeight - 8))
-	end
-
-	refs.lootFrame.AnchorPoint = Vector2.new(0, 0)
-	refs.lootFrame.Position = UDim2.fromOffset(startX, startY)
-
-	if refs.inventoryFrame then
-		refs.inventoryFrame.AnchorPoint = Vector2.new(0, 0)
-		refs.inventoryFrame.Position = UDim2.fromOffset(startX + lootSize.X + PANEL_GAP, startY)
-	end
-end
-
 local function setUiVisible(visible)
 	local refs = getGuiReferences()
 	if not refs then
 		return
-	end
-
-	if visible then
-		positionPanels()
 	end
 
 	refs.gui.Enabled = visible
@@ -310,14 +277,20 @@ local function cancelDrag()
 end
 
 local function updateDragGhost(position)
+	local refs = getGuiReferences()
+	if not refs then
+		return
+	end
+
+	local guiPosition = toGuiSpace(refs.gui, position)
+
 	if dragging and dragging.ghost then
-		dragging.ghost.Position = UDim2.fromOffset(position.X + 8, position.Y + 8)
+		dragging.ghost.Position = UDim2.fromOffset(guiPosition.X + 8, guiPosition.Y + 8)
 	end
 
 	-- Realca o painel de inventario quando o item esta sobre ele.
-	local refs = getGuiReferences()
-	if dragging and refs and refs.inventoryFrame then
-		if isPositionInsideFrame(refs.inventoryFrame, position) then
+	if dragging and refs.inventoryFrame then
+		if isPositionInsideFrame(refs.inventoryFrame, guiPosition) then
 			refs.inventoryFrame.BackgroundColor3 = INVENTORY_HIGHLIGHT_COLOR
 		else
 			refs.inventoryFrame.BackgroundColor3 = dragging.inventoryColor
@@ -369,7 +342,7 @@ local function finishDrag(position)
 		return
 	end
 
-	local droppedOnInventory = isPositionInsideFrame(refs.inventoryFrame, position)
+	local droppedOnInventory = isPositionInsideFrame(refs.inventoryFrame, toGuiSpace(refs.gui, position))
 
 	cancelDrag()
 
@@ -405,9 +378,6 @@ local function refreshUi(errorMessage)
 	if refs.inventoryFrame then
 		refs.inventoryFrame.Visible = true
 	end
-	positionPanels()
-	-- Reposiciona depois que o layout calcula AbsoluteSize (1o frame apos abrir).
-	task.defer(positionPanels)
 
 	local lootItems = currentLootState.items or {}
 	populateList(refs.lootList, lootItems, true)
@@ -497,7 +467,6 @@ interactionRemote.OnClientEvent:Connect(function(eventName, lootInstance, lootSt
 
 	playLocalSound(lootInstance, soundId, soundVolume)
 
-	lastClickPosition = lastClickPosition or UserInputService:GetMouseLocation()
 	currentLoot = lootInstance
 	currentLootState = lootState
 	currentInventoryState = inventoryState
@@ -527,7 +496,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 
 	local clickedLoot = raycastLootAtMouse() or getClickedLoot(mouse.Target)
 	if clickedLoot and isLootInRange(clickedLoot) then
-		lastClickPosition = clickPosition
 		interactionRemote:FireServer("RequestState", clickedLoot)
 	else
 		-- Clicou fora da UI e fora de um loot valido: fecha tudo.
