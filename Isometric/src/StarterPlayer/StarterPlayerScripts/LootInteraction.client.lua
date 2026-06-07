@@ -28,6 +28,7 @@ local currentLoot = nil
 local currentLootState = nil
 local currentInventoryState = nil
 local selectedItemName = nil
+local selectedItemSource = nil
 local currentHighlight = nil
 
 -- Evita conectar o mesmo botao mais de uma vez.
@@ -332,6 +333,29 @@ local function lootHasItem(itemName)
 	return false
 end
 
+local function inventoryHasItem(itemName)
+	if not currentInventoryState or not itemName then
+		return false
+	end
+
+	for _, item in ipairs(currentInventoryState.items or {}) do
+		if item.name == itemName then
+			return true
+		end
+	end
+
+	return false
+end
+
+-- Verifica se o item selecionado ainda existe na sua origem.
+local function selectedItemStillExists()
+	if selectedItemSource == "inventory" then
+		return inventoryHasItem(selectedItemName)
+	end
+
+	return lootHasItem(selectedItemName)
+end
+
 function onInspectClicked()
 	if currentLoot and isLootInRange(currentLoot) then
 		-- Pede o estado ao servidor; a resposta abre os paineis (fase "open").
@@ -340,7 +364,15 @@ function onInspectClicked()
 end
 
 function onTransferClicked()
-	if selectedItemName and currentLoot then
+	if not selectedItemName or not currentLoot then
+		return
+	end
+
+	if selectedItemSource == "inventory" then
+		-- Item do inventario: devolve para a caixa.
+		interactionRemote:FireServer("StoreItem", currentLoot, selectedItemName)
+	else
+		-- Item da caixa: envia para o inventario.
 		interactionRemote:FireServer("TakeItem", currentLoot, selectedItemName)
 	end
 end
@@ -353,6 +385,7 @@ function showInspectPhase()
 
 	uiPhase = "inspect"
 	selectedItemName = nil
+	selectedItemSource = nil
 	hideAllFrames(refs)
 	refs.gui.Enabled = true
 
@@ -387,8 +420,9 @@ function showOpenPhase()
 	-- Dropar e Equipar: apenas enfeite por enquanto (sem acao).
 end
 
-function showActionPanel(itemName)
+function showActionPanel(itemName, source)
 	selectedItemName = itemName
+	selectedItemSource = source or "loot"
 
 	local refs = getGuiReferences()
 	if not refs then
@@ -404,6 +438,15 @@ function showActionPanel(itemName)
 		refs.actionTitle.Text = itemName
 	end
 
+	-- Ajusta o texto do botao Transferir conforme a origem do item.
+	if refs.transferButton and (refs.transferButton:IsA("TextButton")) then
+		if selectedItemSource == "inventory" then
+			refs.transferButton.Text = "Guardar"
+		else
+			refs.transferButton.Text = "Transferir"
+		end
+	end
+
 	refs.actionFrame.Visible = true
 end
 
@@ -415,7 +458,7 @@ function refreshLists(errorMessage)
 
 	local lootItems = (currentLootState and currentLootState.items) or {}
 	populateList(refs.lootList, lootItems, function(item)
-		showActionPanel(item.name)
+		showActionPanel(item.name, "loot")
 	end)
 
 	if refs.lootTitle then
@@ -433,7 +476,9 @@ function refreshLists(errorMessage)
 	end
 
 	if refs.inventoryList and currentInventoryState then
-		populateList(refs.inventoryList, currentInventoryState.items or {}, nil)
+		populateList(refs.inventoryList, currentInventoryState.items or {}, function(item)
+			showActionPanel(item.name, "inventory")
+		end)
 		if refs.inventoryTitle then
 			refs.inventoryTitle.Text = currentInventoryState.title or "Inventario"
 		end
@@ -441,10 +486,11 @@ function refreshLists(errorMessage)
 		warn("[LootInteraction] InventoryFrame nao encontrado dentro de LootUi. Os itens transferidos nao tem onde aparecer.")
 	end
 
-	-- Se o item selecionado nao existe mais na caixa, fecha a telinha de acoes.
-	if refs.actionFrame and refs.actionFrame.Visible and not lootHasItem(selectedItemName) then
+	-- Se o item selecionado nao existe mais na sua origem, fecha a telinha de acoes.
+	if refs.actionFrame and refs.actionFrame.Visible and not selectedItemStillExists() then
 		refs.actionFrame.Visible = false
 		selectedItemName = nil
+		selectedItemSource = nil
 	end
 end
 
@@ -455,6 +501,7 @@ function hideUi()
 	currentLootState = nil
 	currentInventoryState = nil
 	selectedItemName = nil
+	selectedItemSource = nil
 	clearHighlight()
 
 	local refs = getGuiReferences()

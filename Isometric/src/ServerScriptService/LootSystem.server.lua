@@ -177,6 +177,46 @@ local function removeLootItem(lootInstance, itemName)
 	end
 end
 
+-- Adiciona uma quantidade do item de volta na caixa.
+local function addToLoot(lootInstance, itemName, amount)
+	amount = math.floor(amount or 0)
+	if amount <= 0 then
+		return false
+	end
+
+	local folder = getLootFolder(lootInstance)
+	if not folder then
+		-- Sem a pasta Loot nao da para guardar; cria uma para nao perder o item.
+		folder = Instance.new("Folder")
+		folder.Name = LOOT_FOLDER_NAME
+		folder.Parent = lootInstance
+	end
+
+	local entry = folder:FindFirstChild(itemName)
+	if entry and (entry:IsA("IntValue") or entry:IsA("NumberValue")) then
+		entry.Value = math.floor(entry.Value) + amount
+	else
+		entry = Instance.new("IntValue")
+		entry.Name = itemName
+		entry.Value = amount
+		entry.Parent = folder
+	end
+
+	return true
+end
+
+-- Quantidade do item no inventario do jogador.
+local function getInventoryItemCount(player, itemName)
+	local inventory = getInventory(player)
+	return math.max(0, math.floor(inventory[itemName] or 0))
+end
+
+-- Remove o stack INTEIRO do item do inventario.
+local function removeFromInventory(player, itemName)
+	local inventory = getInventory(player)
+	inventory[itemName] = nil
+end
+
 local function addToInventory(player, itemName, amount)
 	amount = math.floor(amount or 1)
 	if amount <= 0 then
@@ -228,6 +268,24 @@ interactionRemote.OnServerEvent:Connect(function(player, action, lootInstance, i
 		end
 
 		removeLootItem(lootInstance, itemName)
+		sendLootState(player, lootInstance, nil, normalizeSoundId(TAKE_SOUND_ID))
+		return
+	end
+
+	if action == "StoreItem" then
+		if typeof(itemName) ~= "string" then
+			return
+		end
+
+		-- Devolve o stack INTEIRO do inventario para a caixa.
+		local available = getInventoryItemCount(player, itemName)
+		if available <= 0 then
+			sendLootState(player, lootInstance, "Item indisponivel.")
+			return
+		end
+
+		addToLoot(lootInstance, itemName, available)
+		removeFromInventory(player, itemName)
 		sendLootState(player, lootInstance, nil, normalizeSoundId(TAKE_SOUND_ID))
 		return
 	end
